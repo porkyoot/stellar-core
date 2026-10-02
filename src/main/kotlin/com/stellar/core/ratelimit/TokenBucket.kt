@@ -15,10 +15,18 @@ import kotlin.math.ceil
  * @property timeSource Monotonic nanosecond time provider, injectable for deterministic testing.
  */
 class TokenBucket(
-    val capacity: Double = DEFAULT_CAPACITY,
-    val refillRatePerSecond: Double = DEFAULT_REFILL_RATE,
+    capacity: Double = DEFAULT_CAPACITY,
+    refillRatePerSecond: Double = DEFAULT_REFILL_RATE,
     private val timeSource: () -> Long = System::nanoTime,
 ) : RateLimiter {
+    @Volatile
+    var capacity: Double = capacity
+        private set
+
+    @Volatile
+    var refillRatePerSecond: Double = refillRatePerSecond
+        private set
+
     private var availableTokens: Double = capacity
     private var lastRefillNanos: Long = timeSource()
     private val lock = Any()
@@ -28,6 +36,17 @@ class TokenBucket(
             refillInternal()
             availableTokens
         }
+
+    /**
+     * Dynamically updates the rate limiter capacity and refill rate in a thread-safe manner.
+     */
+    fun reconfigure(newCapacity: Double, newRefillRatePerSecond: Double) {
+        synchronized(lock) {
+            capacity = newCapacity
+            refillRatePerSecond = newRefillRatePerSecond
+            availableTokens = availableTokens.coerceAtMost(newCapacity)
+        }
+    }
 
     fun refill() {
         synchronized(lock) {
