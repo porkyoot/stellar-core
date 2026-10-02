@@ -77,4 +77,21 @@ class RateLimiterSpec : FunSpec({
         val waitMs = bucket.timeUntilAvailable(1.0)
         waitMs shouldBe 500L
     }
+
+    test("reconfigure to Double.MAX_VALUE allows unlimited acquisitions") {
+        var mockNanos = 0L
+        val bucket = TokenBucket(
+            capacity = 1.0,
+            refillRatePerSecond = 1.0,
+            timeSource = { mockNanos },
+        )
+        bucket.tryAcquire(1.0) shouldBe true
+        bucket.tryAcquire(1.0) shouldBe false
+
+        bucket.reconfigure(Double.MAX_VALUE, Double.MAX_VALUE)
+        repeat(100) {
+            val acquired = bucket.tryAcquire(1.0)
+            acquired shouldBe true
+        }
+    }
 })

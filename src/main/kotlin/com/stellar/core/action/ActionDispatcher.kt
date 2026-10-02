@@ -53,6 +53,12 @@ class ActionDispatcher(
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
 
+    private val _completions = MutableSharedFlow<ModAction>(
+        replay = 0,
+        extraBufferCapacity = DEFAULT_COMPLETION_BUFFER_CAPACITY,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+
     /**
      * Shared flow emitting failure events whenever an action returns [ActionResult.Failure]
      * or throws an unhandled exception.
@@ -64,6 +70,11 @@ class ActionDispatcher(
      */
     val failureFlow: SharedFlow<ActionFailureEvent>
         get() = failures
+
+    /**
+     * Observable stream emitting actions that completed successfully.
+     */
+    val completions: SharedFlow<ModAction> = _completions.asSharedFlow()
 
     /**
      * Number of actions currently pending in the execution queue.
@@ -151,7 +162,7 @@ class ActionDispatcher(
         return when (next.action.priority) {
             ActionPriority.CRITICAL, ActionPriority.HIGH -> true
             ActionPriority.NORMAL, ActionPriority.LOW ->
-                normalLowProcessed < maxActionsPerTick && tokenBucket.tryConsume()
+                (tokenBucket.isUnlimited || normalLowProcessed < maxActionsPerTick) && tokenBucket.tryConsume()
         }
     }
 
@@ -163,7 +174,9 @@ class ActionDispatcher(
     ) {
         try {
             when (val result = action.execute(context)) {
-                is ActionResult.Success -> Unit
+                is ActionResult.Success -> {
+                    _completions.emit(action)
+                }
                 is ActionResult.Failure -> {
                     _failures.emit(
                         ActionFailureEvent(
@@ -215,5 +228,6 @@ class ActionDispatcher(
     companion object {
         const val DEFAULT_MAX_ACTIONS_PER_TICK: Int = 5
         private const val DEFAULT_FAILURE_BUFFER_CAPACITY: Int = 64
+        private const val DEFAULT_COMPLETION_BUFFER_CAPACITY: Int = 64
     }
 }

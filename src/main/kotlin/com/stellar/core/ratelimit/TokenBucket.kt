@@ -31,8 +31,12 @@ class TokenBucket(
     private var lastRefillNanos: Long = timeSource()
     private val lock = Any()
 
+    val isUnlimited: Boolean
+        get() = capacity >= Double.MAX_VALUE || refillRatePerSecond >= Double.MAX_VALUE
+
     override val currentTokens: Double
         get() = synchronized(lock) {
+            if (isUnlimited) return Double.MAX_VALUE
             refillInternal()
             availableTokens
         }
@@ -44,7 +48,11 @@ class TokenBucket(
         synchronized(lock) {
             capacity = newCapacity
             refillRatePerSecond = newRefillRatePerSecond
-            availableTokens = availableTokens.coerceAtMost(newCapacity)
+            availableTokens = if (newCapacity >= Double.MAX_VALUE || newRefillRatePerSecond >= Double.MAX_VALUE) {
+                Double.MAX_VALUE
+            } else {
+                availableTokens.coerceAtMost(newCapacity)
+            }
         }
     }
 
@@ -55,6 +63,9 @@ class TokenBucket(
     }
 
     override fun tryAcquire(tokens: Double): Boolean = synchronized(lock) {
+        if (isUnlimited) {
+            return true
+        }
         refillInternal()
         if (availableTokens >= tokens) {
             availableTokens -= tokens
@@ -70,6 +81,7 @@ class TokenBucket(
     fun tryConsume(tokens: Double = RateLimiter.DEFAULT_ACQUIRE_AMOUNT): Boolean = tryAcquire(tokens)
 
     override suspend fun acquire(tokens: Double) {
+        if (isUnlimited) return
         require(tokens <= capacity) {
             "Requested tokens ($tokens) exceeds bucket capacity ($capacity)"
         }
@@ -87,6 +99,7 @@ class TokenBucket(
     }
 
     override fun acquireBlocking(tokens: Double, timeoutMillis: Long): Boolean {
+        if (isUnlimited) return true
         require(tokens <= capacity) {
             "Requested tokens ($tokens) exceeds bucket capacity ($capacity)"
         }
@@ -116,6 +129,7 @@ class TokenBucket(
     }
 
     override fun timeUntilAvailable(tokens: Double): Long = synchronized(lock) {
+        if (isUnlimited) return 0L
         refillInternal()
         calculateWaitMillis(tokens)
     }
@@ -156,6 +170,10 @@ class TokenBucket(
     }
 
     private fun refillInternal() {
+        if (isUnlimited) {
+            availableTokens = Double.MAX_VALUE
+            return
+        }
         val now = timeSource()
         val elapsedNanos = now - lastRefillNanos
         if (elapsedNanos > 0) {
